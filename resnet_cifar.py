@@ -101,25 +101,6 @@ class ResNet_Cifar(nn.Module):
         return x
 
 
-class RecurrentBlockOrig(nn.Module):
-
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super(RecurrentBlockOrig, self).__init__()
-        self.conv=conv3x3(in_channels, out_channels, stride)
-        self.batchNorms=nn.ModuleList(nn.BatchNorm2d(out_channels) for _ in range(2))
-        self.relu=nn.ReLU(inplace=True)
-        self.stride=stride
-        self.downsample=downsample
-    def forward(self, x):
-        residual=x
-        for i in range(2):
-            if self.downsample is not None:
-                residual=self.downsample(x)
-            residual= residual + self.relu(self.batchNorms[i](self.conv(x)))
-        return residual
-    
-
-
 
 class ResNetBlock_Recurrent(nn.Module):
 
@@ -299,6 +280,23 @@ class RecNetWithIntermediateOutputs(nn.Module):
 
         return (x,[x1, x2, x3])
 """
+class RecurrentBlockOrig(nn.Module):
+
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(RecurrentBlockOrig, self).__init__()
+        self.conv=conv3x3(in_channels, out_channels, stride)
+        self.batchNorms=nn.ModuleList(nn.BatchNorm2d(out_channels) for _ in range(2))
+        self.relu=nn.ReLU(inplace=True)
+        self.stride=stride
+        self.downsample=downsample
+    def forward(self, x):
+        residual=x
+        for i in range(2):
+            if self.downsample is not None:
+                residual=self.downsample(x)
+            residual= residual + self.relu(self.batchNorms[i](self.conv(x)))
+        return residual
+    
 class RecNet1(nn.Module):
     def __init__(self, block, layers, num_classes=100):
         super(RecNet1, self).__init__()
