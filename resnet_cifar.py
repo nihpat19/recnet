@@ -102,11 +102,11 @@ class ResNet_Cifar(nn.Module):
 
 
 
-class ResNetBlock_Recurrent(nn.Module):
+class RecNetBlock(nn.Module):
 
-    def __init__(self, in_channels, out_channels, conv, stride=1, downsample=None):
-        super(ResNetBlock_Recurrent, self).__init__()
-        self.conv=conv
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(RecNetBlock, self).__init__()
+        self.conv=conv3x3(in_channels, out_channels, stride)
         self.batchNorms=nn.ModuleList(nn.BatchNorm2d(out_channels) for _ in range(2))
         self.relu=nn.ReLU(inplace=True)
         self.stride=stride
@@ -149,12 +149,11 @@ class RecNet(nn.Module):
             )
 
         layers = []
-        conv = conv3x3(self.inplanes, planes, stride)
-        layers.append(block(self.inplanes, planes, conv, stride, downsample))
+        layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes
-        conv = conv3x3(self.inplanes, planes, stride)
+        block = block(self.inplanes, planes)
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, conv))
+            layers.append(block)
 
         return nn.Sequential(*layers)
 
