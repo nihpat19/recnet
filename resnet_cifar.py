@@ -106,7 +106,7 @@ class RecNetBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super(RecNetBlock, self).__init__()
-        self.conv=conv3x3(in_channels, out_channels, stride)
+        self.convs=[conv3x3(in_channels, out_channels, stride) for _ in range(2)]
         self.batchNorms=nn.ModuleList(nn.BatchNorm2d(out_channels) for _ in range(2))
         self.relu=nn.ReLU(inplace=True)
         self.stride=stride
@@ -116,7 +116,7 @@ class RecNetBlock(nn.Module):
         for i in range(2):
             if self.downsample is not None:
                 residual=self.downsample(x)
-            residual= residual + self.relu(self.batchNorms[i](self.conv(x)))
+            residual= residual + self.relu(self.batchNorms[i](self.convs[i]))
         return residual
     
 class RecNet(nn.Module):
