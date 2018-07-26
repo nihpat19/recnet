@@ -107,7 +107,7 @@ class RecNetBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super(RecNetBlock, self).__init__()
         self.convs=[conv3x3(in_channels, out_channels, stride) for _ in range(2)]
-        self.batchNorms=nn.ModuleList(nn.BatchNorm2d(out_channels) for _ in range(2))
+        self.batchNorms=None)
         self.relu=nn.ReLU(inplace=True)
         self.stride=stride
         self.downsample=downsample
