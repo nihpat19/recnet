@@ -248,7 +248,7 @@ class RecNetLayerNormBlock(nn.Module):
         out=self.convs[1](out)
         #print("output shape 2: ",out.shape)
         out+=residual
-        return self.relu(nn.LayerNorm(out.shape)(out))
+        return self.relu(nn.LayerNorm(out.shape).cuda()(out))
     
     
 class RecNet_LayerNorm(nn.Module):
