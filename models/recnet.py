@@ -1,9 +1,9 @@
 '''
-resnet for cifar in pytorch
+Recurrent implementation of ResNet to train on Cifar100
 
 Reference:
 [1] K. He, X. Zhang, S. Ren, and J. Sun. Deep residual learning for image recognition. In CVPR, 2016.
-[2] K. He, X. Zhang, S. Ren, and J. Sun. Identity mappings in deep residual networks. In ECCV, 2016.
+[2] Q. Liao, T. Poggio. Bridging the Gaps Between Residual Learning, Recurrent Neural Networks and Visual Cortex. In CBBM, 2016.
 '''
 
 import torch
@@ -16,6 +16,297 @@ def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
 
+
+class RecNetBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None):
+        super(RecNetBlock, self).__init__()
+        self.parent=parent
+        if parent is None:
+            self.convs=nn.ModuleList([conv3x3(in_channels, out_channels, stride), conv3x3(out_channels, out_channels, stride=1)])
+            self.stride=stride
+            self.downsample=downsample
+        else:
+            self.convs = parent.convs
+            self.stride= parent.stride
+            self.downsample=parent.downsample
+        self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels) for _ in range(2)])
+        self.relu=nn.ReLU(inplace=True)
+        
+    def forward(self, x):
+        residual=x
+        if self.downsample is not None:
+            residual=self.downsample(x)
+        #for i in range(2):
+            #print(i)
+        #print('Residual shape: ',residual.shape)
+        out=self.relu(self.batchNorms[0](self.convs[0](x)))
+        #print("output shape 1: ",out.shape)
+        out=self.batchNorms[1](self.convs[1](out))
+        #print("output shape 2: ",out.shape)
+        out+=residual
+        return self.relu(out)
+    
+class RecNet(nn.Module):
+    def __init__(self, block, layers, num_classes=100):
+        super(RecNet, self).__init__()
+        self.inplanes = 16
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.fc = nn.Linear(64, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        layers = []
+        if stride != 1 or self.inplanes != planes:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes)
+            )
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        #BatchNormList=[nn.ModuleList([nn.BatchNorm2d(planes) for _ in range(2)]) for _ in range(blocks)]
+        self.inplanes = planes
+        parent=block(self.inplanes, planes, downsample=None)
+        layers.append(parent)
+        
+        #layerBlock = block(self.inplanes, planes, parent)
+        for i in range(1, blocks):
+            #layerBlock.batchNorms=BatchNormList[i]
+            layers.append(block(self.inplanes, planes, parent=parent))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x
+    
+    
+    
+
+ 
+
+class RecNet_FourLayers(nn.Module):
+    def __init__(self, block, layers, num_classes=100):
+        super(RecNet_FourLayers, self).__init__()
+        self.inplanes = 16
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 128, layers[3], stride=2)
+        self.avgpool = nn.AvgPool2d(4, stride=1)
+        self.fc = nn.Linear(128, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def _make_layer(self, block, planes, blocks, stride=1):
+            downsample = None
+            layers = []
+            if stride != 1 or self.inplanes != planes:
+                downsample = nn.Sequential(
+                    nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+                    nn.BatchNorm2d(planes)
+                )
+            layers.append(block(self.inplanes, planes, stride, downsample))
+            #BatchNormList=[nn.ModuleList([nn.BatchNorm2d(planes) for _ in range(2)]) for _ in range(blocks)]
+            self.inplanes = planes
+            parent=block(self.inplanes, planes, downsample=None)
+            layers.append(parent)
+
+            #layerBlock = block(self.inplanes, planes, parent)
+            for i in range(1, blocks):
+                layers.append(block(self.inplanes, planes, parent=parent))
+            return nn.Sequential(*layers)
+
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x
+    
+class RecNetWithIntermediateOutputs(nn.Module):
+    def __init__(self, block, layers, num_classes=100):
+        super(RecNet, self).__init__()
+        self.inplanes = 16
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.fc = nn.Linear(64, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes)
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x1 = self.layer1(x)
+        x2 = self.layer2(x1)
+        x3 = self.layer3(x2)
+
+        x = self.avgpool(x3)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return (x,[x1, x2, x3])
+    
+    
+    
+    
+class RecNetLayerNormBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None):
+        super(RecNetLayerNormBlock, self).__init__()
+        self.parent=parent
+        if parent is None:
+            self.convs=nn.ModuleList([conv3x3(in_channels, out_channels, stride), conv3x3(out_channels, out_channels, stride=1)])
+            self.stride=stride
+            self.downsample=downsample
+        else:
+            self.convs = parent.convs
+            self.stride= parent.stride
+            self.downsample=parent.downsample
+        self.relu=nn.ReLU(inplace=True)
+        
+    def forward(self, x):
+        residual=x
+        if self.downsample is not None:
+            residual=self.downsample(x)
+        #for i in range(2):
+            #print(i)
+        #print('Residual shape: ',residual.shape)
+        out=self.relu(self.convs[0](x))
+        #print("output shape 1: ",out.shape)
+        out=self.convs[1](out)
+        #print("output shape 2: ",out.shape)
+        out+=residual
+        return self.relu(nn.LayerNorm(out.shape)(out))
+    
+    
+class RecNet_LayerNorm(nn.Module):
+    def __init__(self, block, layers, num_classes=100):
+        super(RecNet_LayerNorm, self).__init__()
+        self.inplanes = 16
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.fc = nn.Linear(64, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.LayerNorm):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+            #layers.append(nn.LayerNorm(planes))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x    
+    
+    
+    
+    
+    
+    
 class BasicBlock(nn.Module):
     expansion=1
 
@@ -35,12 +326,13 @@ class BasicBlock(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-
+        print("output shape 1: ",out.shape)
         out = self.conv2(out)
         out = self.bn2(out)
-
+        print("output shape 2: ",out.shape)
         if self.downsample is not None:
             residual = self.downsample(x)
+        print("residual shape: ",residual.shape)
 
         out += residual
         out = self.relu(out)
@@ -101,6 +393,7 @@ class ResNet_Cifar(nn.Module):
         return x
 
 
+"""
 class RecurrentBlockOrig(nn.Module):
 
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
@@ -170,186 +463,6 @@ class RecNet1(nn.Module):
 
         return x
 
-
-class ResNetBlock_Recurrent(nn.Module):
-
-    def __init__(self, in_channels, out_channels, conv, stride=1, downsample=None):
-        super(ResNetBlock_Recurrent, self).__init__()
-        self.conv=conv
-        self.batchNorms=nn.ModuleList(nn.BatchNorm2d(out_channels) for _ in range(2))
-        self.relu=nn.ReLU(inplace=True)
-        self.stride=stride
-        self.downsample=downsample
-    def forward(self, x):
-        residual=x
-        for i in range(2):
-            if self.downsample is not None:
-                residual=self.downsample(x)
-            residual= residual + self.relu(self.batchNorms[i](self.conv(x)))
-        return residual
-    
-class RecNet(nn.Module):
-    def __init__(self, block, layers, num_classes=100):
-        super(RecNet, self).__init__()
-        self.inplanes = 16
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 16, layers[0])
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
-        self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = nn.Linear(64, num_classes)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes)
-            )
-
-        layers = []
-        conv = conv3x3(self.inplanes, planes, stride)
-        layers.append(block(self.inplanes, planes, conv, stride, downsample))
-        self.inplanes = planes
-        conv = conv3x3(self.inplanes, planes, stride)
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, conv))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-
-        return x
-    
- 
-class RecNet_FourLayers(nn.Module):
-    def __init__(self, block, layers, num_classes=100):
-        super(RecNet_FourLayers, self).__init__()
-        self.inplanes = 16
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 16, layers[0])
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 128, layers[3], stride=2)
-        self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = nn.Linear(128, num_classes)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes)
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
-        self.inplanes = planes
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-
-        return x
-    
-class RecNetWithIntermediateOutputs(nn.Module):
-    def __init__(self, block, layers, num_classes=100):
-        super(RecNet, self).__init__()
-        self.inplanes = 16
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 16, layers[0])
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
-        self.avgpool = nn.AvgPool2d(8, stride=1)
-        self.fc = nn.Linear(64, num_classes)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes)
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
-        self.inplanes = planes
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x1 = self.layer1(x)
-        x2 = self.layer2(x1)
-        x3 = self.layer3(x2)
-
-        x = self.avgpool(x3)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-
-        return (x,[x1, x2, x3])
-"""
-
 class RecNetBlock2(nn.Module):
 
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
@@ -364,8 +477,8 @@ class RecNetBlock2(nn.Module):
         for _ in range(2):
             if self.downsample is not None:
                 residual=self.downsample(x)
-            residual= residual + self.relu(self.conv(x))
-        return residual
+            residual= self.layernorm(residual + self.relu(self.conv(x)))
+        return self.relu(residual)
         
 class RecNet_LayerNorm(nn.Module):
     def __init__(self, block, layers, num_classes=100):
@@ -433,19 +546,19 @@ def resnet56_cifar(**kwargs):
     return model
 
 def recnet(**kwargs):
-    model = RecNet(ResNetBlock_Recurrent, [9,9,9], **kwargs)
+    model = RecNet(RecNetBlock, [9,9,9], **kwargs)
     return model
 
 def recnet4(**kwargs):
     model = RecNet_FourLayers(ResNetBlock_Recurrent, [9,9,9,9], **kwargs)
     return model
 
-"""
+
 def recnet_layernorm(**kwargs):
-    model = RecNet_LayerNorm(RecNetBlock2, [9,9,9], **kwargs)
+    model = RecNet_LayerNorm(RecNetLayerNormBlock, [9,9,9], **kwargs)
     return model
 
-"""
+
 if __name__ == '__main__':
     net = preact_resnet110_cifar()
     y = net(torch.autograd.Variable(torch.randn(1, 3, 32, 32)))
