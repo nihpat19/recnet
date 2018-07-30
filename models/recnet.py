@@ -231,7 +231,7 @@ class RecNetBlock_postrelu(nn.Module):
             self.stride= parent.stride
             self.downsample=parent.downsample
         self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels) for _ in range(2)])
-        self.relu=nn.ReLU(inplace=True)
+        self.relu=nn.ReLU()
         
     def forward(self, x):
         residual=x
@@ -368,6 +368,37 @@ class BasicBlock(nn.Module):
         out += residual
         out = self.relu(out)
 
+        return out
+    
+class BasicBlock_postrelu(nn.Module):
+    expansion=1
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
+        super(BasicBlock_postrelu, self).__init__()
+        self.conv1 = conv3x3(inplanes, planes, stride)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.relu = nn.ReLU()
+        self.conv2 = conv3x3(planes, planes)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        #print("output shape 1: ",out.shape)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out=self.relu(out)
+        #print("output shape 2: ",out.shape)
+        if self.downsample is not None:
+            residual = self.downsample(x)
+        #print("residual shape: ",residual.shape)
+
+        out += residual
         return out
     
 class ResNet_Cifar(nn.Module):
@@ -663,6 +694,10 @@ def resnet20_cifar(**kwargs):
 
 def resnet56_cifar(**kwargs):
     model = ResNet_Cifar(BasicBlock, [9, 9, 9], **kwargs)
+    return model
+
+def resnet_postrelu(**kwargs):
+    model = ResNet_Cifar(BasicBlock_postrelu, [9, 9, 9], **kwargs)
     return model
 
 def recnet(**kwargs):
