@@ -143,12 +143,10 @@ class RecNetBlock_postrelu_affine(nn.Module):
             self.downsample=parent.downsample
         self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
         self.relu=nn.ReLU()
-        self.linearA=nn.Linear(2*out_channels, 2*out_channels)
-        self.linearB=nn.Linear(2*out_channels, 2*out_channels)
+        self.linearA=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels)
+        self.linearB=nn.Sequential(nn.Linear(2*out_channels, out_channels//2),nn.Linear(out_channels//2, 2*out_channels)
         self.affine_size=out_channels
-    def forward(self, x):
-        alphas = self.linearA(x[1][0])
-        betas = self.linearB(x[1][1])
+    def forward(self, (x, (alphas, betas))):
         split_alphas = alphas.split(self.affine_size)
         split_betas = betas.split(self.affine_size)
         residual=x[0]
@@ -156,13 +154,15 @@ class RecNetBlock_postrelu_affine(nn.Module):
             residual=self.relu(self.downsample(x[0]))
         #print('Residual shape: ',residual.shape)
         out=self.batchNorms[0](self.convs[0](x[0]))
-        out=(out*split_alphas[0].view(1,-1,1,1))+split_alphas[1].view(1,-1,1,1)
+        out=self.relu((out*split_alphas[0].view(1,-1,1,1))+split_alphas[1].view(1,-1,1,1))
         #print("output shape 1: ",out.shape)
-        out=self.relu(self.batchNorms[1](self.convs[1](out)))
-        out=(out*split_betas[0].view(1,-1,1,1))+split_betas[1].view(1,-1,1,1)
+        out=self.batchNorms[1](self.convs[1](out))
+        out=self.relu((out*split_betas[0].view(1,-1,1,1))+split_betas[1].view(1,-1,1,1))
         #print("output shape 2: ",out.shape)
         out+=residual
-        return (out, (alphas, betas))
+        new_alphas = self.linearA(alphas)
+        new_betas = self.linearB(betas)
+        return (out, (new_alphas, new_betas))
     
 
 class RecNet_Affine(nn.Module):
@@ -212,9 +212,9 @@ class RecNet_Affine(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         
-        (x, _) = self.layer1((x, (self.alphas[0], self.betas[0])))
-        (x, _) = self.layer2((x, (self.alphas[1], self.betas[1])))
-        (x, _) = self.layer3((x, (self.alphas[2], self.betas[2])))
+        (x, (l1_alphas, l1_betas)) = self.layer1((x, (self.alphas[0], self.betas[0])))
+        (x, (l2_alphas, l2_betas)) = self.layer2((x, (self.alphas[1], self.betas[1])))
+        (x, (l3_alphas, l3_betas)) = self.layer3((x, (self.alphas[2], self.betas[2])))
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
@@ -602,9 +602,6 @@ def recnet_affine(**kwargs):
 
 def recnet_layernorm(**kwargs):
     model = RecNet_LayerNorm(RecNetLayerNormBlock, [9,9,9], **kwargs)
-    return model
-def recnet_nonorms(**kwargs):
-    model = RecNet_NoNorms(RecNetBlock_NoNorm, [9,9,9], **kwargs)
     return model
 
 if __name__ == '__main__':
