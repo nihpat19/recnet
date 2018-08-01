@@ -150,12 +150,15 @@ class RecNetBlock_postrelu_affine(nn.Module):
             self.downsample=parent.downsample
         self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
         self.relu=nn.ReLU()
-        self.linear=nn.Linear(2*out_channels, 2*out_channels)
+        self.linearA=nn.Linear(2*out_channels, 2*out_channels)
+        self.linearB=nn.Linear(2*out_channels, 2*out_channels)
         self.affine_size=out_channels
     def forward(self, x):
         #print(type(x[0]))
-        alphas = self.linear(x[1][0])
-        betas = self.linear(x[1][1])
+        alphas = self.linearA(x[1][0])
+        betas = self.linearB(x[1][1])
+        split_alphas = alphas.split(self.affine_size)
+        split_betas = betas.split(self.affine_size)
         residual=x[0]
         if self.downsample is not None:
             residual=self.relu(self.downsample(x[0]))
@@ -163,10 +166,10 @@ class RecNetBlock_postrelu_affine(nn.Module):
             #print(i)
         #print('Residual shape: ',residual.shape)
         out=self.batchNorms[0](self.convs[0](x[0]))
-        out=(out*alphas.split(self.affine_size)[0].view(1,-1,1,1))+betas.split(self.affine_size)[0].view(1,-1,1,1)
+        out=(out*split_alphas[0].view(1,-1,1,1))+split_alphas[1].view(1,-1,1,1)
         #print("output shape 1: ",out.shape)
         out=self.relu(self.batchNorms[1](self.convs[1](out)))
-        out=(out*alphas.split(self.affine_size)[1].view(1,-1,1,1))+betas.split(self.affine_size)[1].view(1,-1,1,1)
+        out=(out*split_betas[0].view(1,-1,1,1))+split_betas[1].view(1,-1,1,1)
         #print("output shape 2: ",out.shape)
         out+=residual
         return (out, (alphas, betas))
@@ -178,12 +181,9 @@ class RecNet_Affine(nn.Module):
         self.inplanes = 16
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(16)
-        self.alpha1 = nn.Parameter(torch.randn(2*16))
-        self.alpha2 = nn.Parameter(torch.randn(2*32))
-        self.alpha3 = nn.Parameter(torch.randn(2*64))
-        self.beta1 = nn.Parameter(torch.randn(2*16))
-        self.beta2 = nn.Parameter(torch.randn(2*32))
-        self.beta3 = nn.Parameter(torch.randn(2*64))
+        self.sizes = [16,32,64]
+        self.alphas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
+        self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
        
         self.relu = nn.ReLU(inplace=True)
         self.layer1 = self._make_layer(block, 16, layers[0])
@@ -196,11 +196,10 @@ class RecNet_Affine(nn.Module):
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
-            """
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-            """
+        for alpha in self.alphas:
+            alpha.data.fill_(0)
+        for beta in self.betas:
+            beta.data.fill_(0)
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         layers = []
@@ -225,10 +224,10 @@ class RecNet_Affine(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-
-        (x, _) = self.layer1((x, (self.alpha1, self.beta1)))
-        (x, _) = self.layer2((x, (self.alpha2, self.beta2)))
-        (x, _) = self.layer3((x, (self.alpha3, self.beta3)))
+        
+        (x, _) = self.layer1((x, (self.alphas[0], self.betas[0])))
+        (x, _) = self.layer2((x, (self.alphas[1], self.betas[1])))
+        (x, _) = self.layer3((x, (self.alphas[2], self.betas[2])))
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
