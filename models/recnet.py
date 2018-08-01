@@ -143,7 +143,7 @@ class RecNetBlock_postrelu_affine(nn.Module):
             self.downsample=parent.downsample
         self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
         self.relu=nn.ReLU()
-        self.linearA=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels)
+        self.linearA=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
         self.linearB=nn.Sequential(nn.Linear(2*out_channels, out_channels//2),nn.Linear(out_channels//2, 2*out_channels)
         self.affine_size=out_channels
     def forward(self, (x, (alphas, betas))):
