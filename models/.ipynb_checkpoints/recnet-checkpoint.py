@@ -144,16 +144,17 @@ class RecNetBlock_postrelu_affine(nn.Module):
         self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
         self.relu=nn.ReLU()
         self.linearA=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
-        self.linearB=nn.Sequential(nn.Linear(2*out_channels, out_channels//2),nn.Linear(out_channels//2, 2*out_channels)
+        self.linearB=nn.Sequential(nn.Linear(2*out_channels, out_channels//2),nn.Linear(out_channels//2, 2*out_channels))
         self.affine_size=out_channels
-    def forward(self, (x, (alphas, betas))):
+    def forward(self, x):
+        (x, alphas, betas)=x
         split_alphas = alphas.split(self.affine_size)
         split_betas = betas.split(self.affine_size)
         residual=x[0]
         if self.downsample is not None:
-            residual=self.relu(self.downsample(x[0]))
+            residual=self.relu(self.downsample(x))
         #print('Residual shape: ',residual.shape)
-        out=self.batchNorms[0](self.convs[0](x[0]))
+        out=self.batchNorms[0](self.convs[0](x))
         out=self.relu((out*split_alphas[0].view(1,-1,1,1))+split_alphas[1].view(1,-1,1,1))
         #print("output shape 1: ",out.shape)
         out=self.batchNorms[1](self.convs[1](out))
@@ -162,7 +163,7 @@ class RecNetBlock_postrelu_affine(nn.Module):
         out+=residual
         new_alphas = self.linearA(alphas)
         new_betas = self.linearB(betas)
-        return (out, (new_alphas, new_betas))
+        return (out, new_alphas, new_betas)
     
 
 class RecNet_Affine(nn.Module):
@@ -212,10 +213,10 @@ class RecNet_Affine(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         
-        (x, (l1_alphas, l1_betas)) = self.layer1((x, (self.alphas[0], self.betas[0])))
-        (x, (l2_alphas, l2_betas)) = self.layer2((x, (self.alphas[1], self.betas[1])))
-        (x, (l3_alphas, l3_betas)) = self.layer3((x, (self.alphas[2], self.betas[2])))
-
+        (x, l1_alphas, l1_betas) = self.layer1((x, self.alphas[0], self.betas[0]))
+        (x, l2_alphas, l2_betas) = self.layer2((x, self.alphas[1], self.betas[1]))
+        (x, l3_alphas, l3_betas) = self.layer3((x, self.alphas[2], self.betas[2]))
+        
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
