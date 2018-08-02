@@ -128,10 +128,10 @@ class RecNet(nn.Module):
         return x
     
 
-class RecNetBlock_postrelu_affine(nn.Module):
+class RecNetBlock_Affine(nn.Module):
 
     def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None):
-        super(RecNetBlock_postrelu_affine, self).__init__()
+        super(RecNetBlock_Affine, self).__init__()
         self.parent=parent
         if parent is None:
             self.convs=nn.ModuleList([conv3x3(in_channels, out_channels, stride), conv3x3(out_channels, out_channels, stride=1)])
@@ -147,26 +147,25 @@ class RecNetBlock_postrelu_affine(nn.Module):
         self.linearB=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
         self.affine_size=out_channels
     def forward(self, x):
-        (x, alphas, betas)=x
-        split_alphas = alphas.split(self.affine_size)
-        split_betas = betas.split(self.affine_size)
+        (x, bn1Affines, bn2Affines)=x
+        bn1_WB = bn1Affines.split(self.affine_size)
+        bn2_WB = bn2Affines.split(self.affine_size)
         residual=x
         if self.downsample is not None:
             residual=self.relu(self.downsample(x))
         #print('Residual shape: ',residual.shape)
         out=self.batchNorms[0](self.convs[0](x))
-        out=self.relu(out*split_alphas[0].view(1,-1,1,1)+split_alphas[1].view(1,-1,1,1))
+        out=self.relu(out*bn1_WB[0].view(1,-1,1,1)+bn1_WB[1].view(1,-1,1,1))
         #print("output shape 1: ",out.shape)
         out=self.batchNorms[1](self.convs[1](out))
-        out=self.relu(out*split_betas[0].view(1,-1,1,1)+split_betas[1].view(1,-1,1,1))
+        out=self.relu(out*bn2_WB[0].view(1,-1,1,1)+bn2_WB[1].view(1,-1,1,1))
         #print("output shape 2: ",out.shape)
         out+=residual
         #print(alphas)
-        new_alphas = self.linearA(alphas)
-        new_betas = self.linearB(betas)
+        new_bn1Affines = self.linearA(bn1Affines)
+        new_bn2Affines = self.linearB(bn2Affines)
         #print(new_alphas)
-        return (out, new_alphas, new_betas)
-    
+        return (out, new_bn1Affines, new_bn2Affines)
 
 class RecNet_Affine(nn.Module):
     def __init__(self, block, layers, num_classes=100):
@@ -224,9 +223,116 @@ class RecNet_Affine(nn.Module):
         x = self.fc(x)
 
         return x
-    
-    
 
+class RecNetBlock_Affine_TwoStep(nn.Module):
+
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None):
+        super(RecNetBlock_Affine_TwoStep, self).__init__()
+        self.parent=parent
+        if parent is None:
+            self.convs=nn.ModuleList([conv3x3(in_channels, out_channels, stride), conv3x3(out_channels, out_channels, stride=1)])
+            self.stride=stride
+            self.downsample=downsample
+        else:
+            self.convs = parent.convs
+            self.stride= parent.stride
+            self.downsample=parent.downsample
+        self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
+        self.relu=nn.ReLU()
+        self.affine_size=out_channels
+        self.linearA = nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
+        self.linearB = nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
+        self.linear2A = nn.Sequential(nn.Linear(4*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
+        self.linear2B = nn.Sequential(nn.Linear(4*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
+
+    def forward(self, x):
+        (x, bn1_2affines, bn2_2affines)=x
+        (bn1_affine1, bn1_affine2) = bn1_2affines.split(2*self.affine_size)
+        (bn2_affine1, bn2_affine2) = bn2_2affines.split(2*self.affine_size)
+        (bn1_affine1_w, bn1_affine1_b, bn1_affine2_w, bn1_affine2_b) = bn1_2affines.split(self.affine_size)
+        (bn2_affine2_w, bn2_affine1_b, bn2_affine2_w, bn2_affine2_b) = bn2_2affines.split(self.affine_size)
+        
+        residual=x
+        if self.downsample is not None:
+            residual=self.relu(self.downsample(x))
+        #print('Residual shape: ',residual.shape)
+        out=self.batchNorms[0](self.convs[0](x))
+        out=self.relu(out*bn1_affine1_w.view(1,-1,1,1)+bn1_affine1_b.view(1,-1,1,1))
+        #print("output shape 1: ",out.shape)
+        out=self.batchNorms[1](self.convs[1](out))
+        out=self.relu(out*bn2_affine2_w.view(1,-1,1,1)+bn2_affine2_b.view(1,-1,1,1))
+        #print("output shape 2: ",out.shape)
+        out+=residual
+        #print(alphas)
+        if bn1_2affines.equal(torch.zeros(4*self.affine_size).cuda()) and bn2_2affines.equal(torch.zeros(4*self.affine_size).cuda()):
+            new_bn1Affine = self.linearA(bn1_affine1)
+            new_bn2Affine = self.linearB(bn2_affine1)
+            new_bn1Timesteps = torch.cat((new_bn1Affine, bn1_affine1))
+            new_bn2Timesteps = torch.cat((new_bn2Affine, bn2_affine1))
+            return (out, new_bn1Timesteps, new_bn2Timesteps)
+        else:
+            new_bn1Timesteps = torch.cat((self.linear2A(bn1_2affines), bn1_affine1))
+            new_bn2Timesteps = torch.cat((self.linear2B(bn2_2affines), bn2_affine1))
+            return (out, new_bn1Timesteps, new_bn2Timesteps)
+            
+    
+    
+class RecNet_Affine_TwoStep(nn.Module):
+    def __init__(self, block, layers, num_classes=100):
+        super(RecNet_Affine_TwoStep, self).__init__()
+        self.inplanes = 16
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.sizes = [16,32,64]
+        self.alpha2s = nn.ParameterList([nn.Parameter(torch.FloatTensor(4*sz)) for sz in self.sizes])
+        self.beta2s = nn.ParameterList([nn.Parameter(torch.FloatTensor(4*sz)) for sz in self.sizes])
+       
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.fc = nn.Linear(64, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+        for alpha in self.alpha2s:
+            alpha.data.fill_(0)
+        for beta in self.beta2s:
+            beta.data.fill_(0)
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        layers = []
+        if stride != 1 or self.inplanes != planes:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes)
+            )
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes
+        parent=block(self.inplanes, planes, downsample=None)
+        layers.append(parent)
+        
+        for i in range(1, blocks):
+            layers.append(block(self.inplanes, planes, parent=parent))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        
+        (x, l1_alphas, l1_betas) = self.layer1((x, self.alpha2s[0], self.beta2s[0]))
+        (x, l2_alphas, l2_betas) = self.layer2((x, self.alpha2s[1], self.beta2s[1]))
+        (x, l3_alphas, l3_betas) = self.layer3((x, self.alpha2s[2], self.beta2s[2]))
+        
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x
  
 
 class RecNet_FourLayers(nn.Module):
@@ -362,9 +468,6 @@ class RecNet_LayerNorm(nn.Module):
         x = self.fc(x)
 
         return x    
-    
-    
-    
     
     
     
@@ -600,7 +703,11 @@ def recnet_postrelu(**kwargs):
     return model
 
 def recnet_affine(**kwargs):
-    model = RecNet_Affine(RecNetBlock_postrelu_affine, [9,9,9], **kwargs)
+    model = RecNet_Affine(RecNetBlock_Affine, [9,9,9], **kwargs)
+    return model
+
+def recnet_affine_2steps(**kwargs):
+    model = RecNet_Affine_TwoStep(RecNetBlock_Affine_TwoStep, [9,9,9], **kwargs)
     return model
 
 def recnet_layernorm(**kwargs):
