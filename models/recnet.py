@@ -143,9 +143,9 @@ class RecNetBlock_Affine(nn.Module):
             self.downsample=parent.downsample
         self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
         self.relu=nn.ReLU()
-        self.linearA=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
-        self.linearB=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
-        self.affine_size=out_channels
+        self.affine_size = out_channels
+        self.linearA=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.ReLU(), nn.Linear(out_channels//2, out_channels//2), nn.ReLU(), nn.Linear(out_channels//2, out_channels//2), nn.ReLU(), nn.Linear(out_channels//2, 2*out_channels))
+        self.linearB=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.ReLU(), nn.Linear(out_channels//2, out_channels//2), nn.ReLU(), nn.Linear(out_channels//2, out_channels//2), nn.ReLU(), nn.Linear(out_channels//2, 2*out_channels))
     def forward(self, x):
         (x, bn1Affines, bn2Affines)=x
         bn1_WB = bn1Affines.split(self.affine_size)
@@ -336,6 +336,44 @@ class RecNet_Affine_TwoStep(nn.Module):
 
         return x
  
+class RecNetBlock_Affine_GRU(nn.Module):
+
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None):
+        super(RecNetBlock_Affine, self).__init__()
+        self.parent=parent
+        if parent is None:
+            self.convs=nn.ModuleList([conv3x3(in_channels, out_channels, stride), conv3x3(out_channels, out_channels, stride=1)])
+            self.stride=stride
+            self.downsample=downsample
+        else:
+            self.convs = parent.convs
+            self.stride= parent.stride
+            self.downsample=parent.downsample
+        self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
+        self.relu=nn.ReLU()
+        self.gruA = nn.GRU(2*out_channels,2*out_channels,1)
+        self.gruB = nn.GRU(2*out_channels,2*out_channels,1)
+        self.affine_size=out_channels
+    def forward(self, x):
+        (x, bn1Affines, bn2Affines)=x
+        (bn1_W, bn1_B) = bn1Affines.split(self.affine_size)
+        (bn2_W, bn2_B) = bn2Affines.split(self.affine_size)
+        residual=x
+        if self.downsample is not None:
+            residual=self.relu(self.downsample(x))
+        #print('Residual shape: ',residual.shape)
+        out=self.batchNorms[0](self.convs[0](x))
+        out=self.relu(out*bn1_WB.view(1,-1,1,1)+bn1_B.view(1,-1,1,1))
+        #print("output shape 1: ",out.shape)
+        out=self.batchNorms[1](self.convs[1](out))
+        out=self.relu(out*bn2_W.view(1,-1,1,1)+bn2_B.view(1,-1,1,1))
+        #print("output shape 2: ",out.shape)
+        out+=residual
+        #print(alphas)
+        (new_bn1Affines, _) = self.gruA(bn1Affines.view(1,1,-1))
+        (new_bn2Affines, _) = self.gruB(bn2Affines.view(1,1,-1))
+        #print(new_alphas)
+        return (out, new_bn1Affines.squeeze(), new_bn2Affines.squeeze())
 
 class RecNet_FourLayers(nn.Module):
     def __init__(self, block, layers, num_classes=100):
@@ -710,6 +748,9 @@ def recnet_affine(**kwargs):
 
 def recnet_affine_2steps(**kwargs):
     model = RecNet_Affine_TwoStep(RecNetBlock_Affine_TwoStep, [9,9,9], **kwargs)
+    return model
+def recnet_affine_gru(**kwargs):
+    model = RecNet_Affine(RecNetBlock_Affine, [9,9,9], **kwargs)
     return model
 
 def recnet_layernorm(**kwargs):
