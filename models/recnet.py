@@ -250,7 +250,7 @@ class RecNetBlock_Affine_TwoStep(nn.Module):
         (bn1_affine1, bn1_affine2) = bn1_2affines.split(2*self.affine_size)
         (bn2_affine1, bn2_affine2) = bn2_2affines.split(2*self.affine_size)
         (bn1_affine1_w, bn1_affine1_b, bn1_affine2_w, bn1_affine2_b) = bn1_2affines.split(self.affine_size)
-        (bn2_affine2_w, bn2_affine1_b, bn2_affine2_w, bn2_affine2_b) = bn2_2affines.split(self.affine_size)
+        (bn2_affine1_w, bn2_affine1_b, bn2_affine2_w, bn2_affine2_b) = bn2_2affines.split(self.affine_size)
         
         residual=x
         if self.downsample is not None:
@@ -260,10 +260,11 @@ class RecNetBlock_Affine_TwoStep(nn.Module):
         out=self.relu(out*bn1_affine1_w.view(1,-1,1,1)+bn1_affine1_b.view(1,-1,1,1))
         #print("output shape 1: ",out.shape)
         out=self.batchNorms[1](self.convs[1](out))
-        out=self.relu(out*bn2_affine2_w.view(1,-1,1,1)+bn2_affine2_b.view(1,-1,1,1))
+        out=self.relu(out*bn2_affine1_w.view(1,-1,1,1)+bn2_affine1_b.view(1,-1,1,1))
         #print("output shape 2: ",out.shape)
         out+=residual
         #print(alphas)
+        """
         if bn1_2affines.equal(torch.zeros(4*self.affine_size).cuda()) and bn2_2affines.equal(torch.zeros(4*self.affine_size).cuda()):
             new_bn1Affine = self.linearA(bn1_affine1)
             new_bn2Affine = self.linearB(bn2_affine1)
@@ -271,9 +272,10 @@ class RecNetBlock_Affine_TwoStep(nn.Module):
             new_bn2Timesteps = torch.cat((new_bn2Affine, bn2_affine1))
             return (out, new_bn1Timesteps, new_bn2Timesteps)
         else:
-            new_bn1Timesteps = torch.cat((self.linear2A(bn1_2affines), bn1_affine1))
-            new_bn2Timesteps = torch.cat((self.linear2B(bn2_2affines), bn2_affine1))
-            return (out, new_bn1Timesteps, new_bn2Timesteps)
+        """
+        new_bn1Timesteps = torch.cat((self.linear2A(bn1_2affines), bn1_affine1))
+        new_bn2Timesteps = torch.cat((self.linear2B(bn2_2affines), bn2_affine1))
+        return (out, new_bn1Timesteps, new_bn2Timesteps)
             
     
     
