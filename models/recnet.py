@@ -9,6 +9,7 @@ Reference:
 import torch
 import torch.nn as nn
 import math
+from torch.autograd import Variable
 from IPython import embed
 
 
@@ -152,13 +153,19 @@ class RecNetAffineModule(nn.Module):
             return (self.relu(out), affines, loss)
         mean = torch.sum(torch.sum(x, 3), 2).mean(0)
         std = torch.sum(torch.sum(x, 3), 2).std(0)
+        print('std for each channel: ', std)
         (new_affines, _) = self.gru(affines.view(1,1,-1), torch.cat((mean, std)).view(1,1,-1))
+        print(new_affines)
         (new_mean, new_std) = new_affines.squeeze().split(self.affineSize)
+        
         out = out*new_std.view(1,-1,1,1) + new_mean.view(1,-1,1,1)
         out = self.relu(out)
         if self.gruLoss==True:
-            criterion = nn.CrossEntropyLoss()
-            new_loss = criterion(new_mean, 0)+criterion(new_std, 1)
+            mean_var = Variable(new_mean)
+            std_var = Variable(new_std)
+            criterion = nn.L1Loss()
+            #print(mean_var)
+            new_loss = criterion(mean_var, torch.FloatTensor(self.affineSize).fill_(0))+criterion(std_var, torch.FloatTensor(self.affineSize).fill_(1))
             return (out, new_affines.squeeze(), loss+new_loss)
         else:
             return (out, new_affines.squeeze(), loss)
@@ -191,7 +198,7 @@ class RecNetBlockAffineModular(nn.Module):
         (out, new_alphas, new_loss)=self.module1((x,alphas,loss))
         (out, new_betas, new_loss)=self.module2((out, betas, new_loss))
         out+=residual
-        return(out, (new_alphas, new_betas), loss)
+        return(out, (new_alphas, new_betas), new_loss)
        
         
 class RecNetAffineModular(nn.Module):
@@ -244,7 +251,8 @@ class RecNetAffineModular(nn.Module):
 
     def forward(self, x):
         x = self.relu(self.conv1(x))
-        (x, (l1_alphas,l1_betas), loss) = self.layer1((x, (self.alphas[0], self.betas[0]), 0))
+        loss = torch.zeros(1, requires_grad=True)
+        (x, (l1_alphas,l1_betas), loss) = self.layer1((x, (self.alphas[0], self.betas[0]), loss))
         (x, (l2_alphas,l2_betas), loss) = self.layer2((x, (self.alphas[1],self.betas[1]), loss))
         (x, (l3_alphas,l3_betas), loss) = self.layer3((x, (self.alphas[2],self.betas[2]), loss))
         x = self.avgpool(x)
