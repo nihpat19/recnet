@@ -132,25 +132,24 @@ class RecNet_Affine(nn.Module):
     
     
 class RecNetAffineModule(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, gruLoss=False):
+    def __init__(self, in_channels, out_channels, stride, affineType=None, gruLoss=False):
         super(RecNetAffineModule, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
+        #self.in_channels = in_channels
+        #self.out_channels = out_channels
         self.conv = conv3x3(in_channels, out_channels, stride)
-        self.gru = nn.GRU(2*in_channels, 2*out_channels)
+        self.affineType = affineType
+        if affineType is not None:
+            self.gru = nn.GRU(2*in_channels, 2*out_channels)
+        else:
+            self.gru = None
         self.relu = nn.ReLU()
         self.affineSize = out_channels
         self.gruLoss=gruLoss
-    def forward(self, x):
-        if self.gruLoss==True:
-            (x, affines, loss)=x
-        else:
-            (x, affines)=x
+    def forward(self, x): 
+        (x, affines, loss)=x
         out = self.conv(x)
-        if self.gruLoss==True and self.in_channels != self.out_channels:
-            return (out, affines, loss)
-        elif self.gruLoss==False and self.in_channels != self.out_channels:
-            return (out, affines)
+        if self.affineType is None:
+            return (self.relu(out), affines, loss)
         mean = torch.sum(torch.sum(x, 3), 2).mean(0)
         std = torch.sum(torch.sum(x, 3), 2).std(0)
         (new_affines, _) = self.gru(affines.view(1,1,-1), torch.cat((mean, std)).view(1,1,-1))
@@ -162,18 +161,18 @@ class RecNetAffineModule(nn.Module):
             new_loss = criterion(new_mean, 0)+criterion(new_std, 1)
             return (out, new_affines.squeeze(), loss+new_loss)
         else:
-            return (out, new_affines.squeeze())
+            return (out, new_affines.squeeze(), loss)
         
 
         
         
 class RecNetBlockAffineModular(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None, getLoss=False):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None, affineType=None, getLoss=False):
         super(RecNetBlockAffineModular, self).__init__()
         self.parent=parent
         if parent is None:
-            self.module1=RecNetAffineModule(in_channels, out_channels, stride, getLoss)
-            self.module2=RecNetAffineModule(out_channels, out_channels, stride, getLoss)
+            self.module1=RecNetAffineModule(in_channels, out_channels, stride, affineType, getLoss)
+            self.module2=RecNetAffineModule(out_channels, out_channels, 1, affineType, getLoss)
             self.stride=stride
             self.downsample=downsample
         else:
@@ -184,28 +183,17 @@ class RecNetBlockAffineModular(nn.Module):
         self.getLoss=getLoss
         self.relu=nn.ReLU()
     def forward(self, x):
-        residual = x[0]
+        (x, (alphas, betas), loss)=x
         if self.downsample is not None:
-            residual=self.relu(self.downsample(x[0]))
-        if self.getLoss==True:
-            (x, (alphas, betas), loss)=x
-            (out, new_alphas, new_loss)=self.module1((x,alphas,loss))
-            (out, new_betas, new_loss)=self.module2((out, betas, new_loss))
-            out+=residual
-            return(out, (new_alphas, new_betas), loss)
+            residual=self.relu(self.downsample(x))
         else:
-            (x, (alphas, betas))=x
-            (out, new_alphas)=self.module1((x,alphas))
-            #embed()
-            #exit()
-            (out, new_betas)=self.module2((out, betas))
-            out+=residual
-            return(out, (new_alphas, new_betas))
-    
-
-    
-
-    
+            residual = x
+        (out, new_alphas, new_loss)=self.module1((x,alphas,loss))
+        (out, new_betas, new_loss)=self.module2((out, betas, new_loss))
+        out+=residual
+        return(out, (new_alphas, new_betas), loss)
+       
+        
 class RecNetAffineModular(nn.Module):
     def __init__(self, layers, num_classes=100, gruLoss=False):
         super(RecNetAffineModular, self).__init__()
@@ -243,38 +231,26 @@ class RecNetAffineModular(nn.Module):
         downsample = None
         layers = []
         if stride != 1 or self.inplanes != planes:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
-            )
-        layers.append(RecNetBlockAffineModular(self.inplanes, planes, stride, downsample, getLoss=self.gruLoss))
+            downsample = nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False)
+            layers.append(RecNetBlockAffineModular(self.inplanes, planes, stride, downsample, affineType=None, getLoss=self.gruLoss))
+        else:
+            layers.append(RecNetBlockAffineModular(self.inplanes, planes, stride, downsample, affineType='gru', getLoss=self.gruLoss))
         self.inplanes = planes
-        parent=RecNetBlockAffineModular(self.inplanes, planes, downsample=None, getLoss=self.gruLoss)
+        parent=RecNetBlockAffineModular(self.inplanes, planes, downsample=None, affineType='gru', getLoss=self.gruLoss)
         layers.append(parent)
-        
         for i in range(2, blocks):
             layers.append(RecNetBlockAffineModular(self.inplanes, planes, parent=parent, getLoss=self.gruLoss))
         return nn.Sequential(*layers)
 
     def forward(self, x):
         x = self.relu(self.conv1(x))
-        if self.gruLoss==True:
-            (x, (l1_alphas,l1_betas), loss) = self.layer1((x, (self.alphas[0], self.betas[0]), 0))
-            (x, (l2_alphas,l2_betas), loss) = self.layer2((x, (self.alphas[1],self.betas[1]), loss))
-            (x, (l3_alphas,l3_betas), loss) = self.layer3((x, (self.alphas[2],self.betas[2]), loss))
-            x = self.avgpool(x)
-            x = x.view(x.size(0), -1)
-            x = self.fc(x)
-            return (x, loss)
-        else:
-            (x, (l1_alphas, l1_betas)) = self.layer1((x, (self.alphas[0],self.betas[0])))
-            (x, (l2_alphas,l2_betas)) = self.layer2((x, (self.alphas[1], self.betas[1])))
-            (x, (l3_alphas,l3_betas)) = self.layer3((x, (self.alphas[2], self.betas[2])))
-
-            x = self.avgpool(x)
-            x = x.view(x.size(0), -1)
-            x = self.fc(x)
-
-            return x
+        (x, (l1_alphas,l1_betas), loss) = self.layer1((x, (self.alphas[0], self.betas[0]), 0))
+        (x, (l2_alphas,l2_betas), loss) = self.layer2((x, (self.alphas[1],self.betas[1]), loss))
+        (x, (l3_alphas,l3_betas), loss) = self.layer3((x, (self.alphas[2],self.betas[2]), loss))
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return (x, loss)
     
     
     
