@@ -138,9 +138,10 @@ class RecNetAffineModule(nn.Module):
         #self.in_channels = in_channels
         #self.out_channels = out_channels
         self.conv = conv3x3(in_channels, out_channels, stride)
+        self.inorm = nn.InstanceNorm2d(out_channels, affine=False)
         self.affineType = affineType
         if affineType is not None:
-            self.gru = nn.GRU(2*in_channels, 2*out_channels)
+            self.gru = nn.GRU(2*in_channels, 2*out_channels, 1)
         else:
             self.gru = None
         self.relu = nn.ReLU()
@@ -149,27 +150,33 @@ class RecNetAffineModule(nn.Module):
     def forward(self, x): 
         (x, affines, loss)=x
         out = self.conv(x)
-        if self.affineType is None:
-            return (self.relu(out), affines, loss)
-        mean = torch.sum(torch.sum(x, 3), 2).mean(0)
-        std = torch.sum(torch.sum(x, 3), 2).std(0)
-        print('std for each channel: ', std)
-        (new_affines, _) = self.gru(affines.view(1,1,-1), torch.cat((mean, std)).view(1,1,-1))
-        print(new_affines)
-        (new_mean, new_std) = new_affines.squeeze().split(self.affineSize)
-        
-        out = out*new_std.view(1,-1,1,1) + new_mean.view(1,-1,1,1)
-        out = self.relu(out)
-        if self.gruLoss==True:
-            mean_var = Variable(new_mean)
-            std_var = Variable(new_std)
-            criterion = nn.L1Loss()
-            #print(mean_var)
-            new_loss = criterion(mean_var, torch.FloatTensor(self.affineSize).fill_(0))+criterion(std_var, torch.FloatTensor(self.affineSize).fill_(1))
-            return (out, new_affines.squeeze(), loss+new_loss)
+        if self.affineType is not None:
+            intermediate = x.transpose(0, 1).contiguous().view(x.shape[1], -1)
+            mean = intermediate.mean(-1)
+            std = intermediate.std(-1, unbiased=False)
+            if 1 in torch.isnan(std) or 1 in torch.isnan(mean):
+                embed()
+                exit()
+            print('mean for each channel: ',mean)
+            print('std for each channel: ', std)
+            (new_affines, _) = self.gru(affines.view(1,1,-1), torch.cat((mean, std)).view(1,1,-1))
+            if 1 in torch.isnan(new_affines.squeeze()):
+                embed()
+                exit()
+            (new_mean, new_std) = new_affines.squeeze().split(self.affineSize)
+            out = self.inorm(out)
+            out = out*new_std.view(1,-1,1,1) + new_mean.view(1,-1,1,1)
+            out = self.relu(out)
+            if self.gruLoss==True:
+                mean_var = Variable(new_mean)
+                std_var = Variable(new_std)
+                criterion = nn.L1Loss()
+                new_loss = criterion(mean_var, torch.FloatTensor(self.affineSize).fill_(0))+criterion(std_var, torch.FloatTensor(self.affineSize).fill_(1))
+                return (out, new_affines.squeeze(), loss+new_loss)
+            else:
+                return (out, new_affines.squeeze(), loss)
         else:
-            return (out, new_affines.squeeze(), loss)
-        
+            return (self.relu(self.inorm(out)), affines, loss)
 
         
         
@@ -206,6 +213,7 @@ class RecNetAffineModular(nn.Module):
         super(RecNetAffineModular, self).__init__()
         self.inplanes = 16
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.norm1 = nn.InstanceNorm2d(16, affine=False)
         self.sizes = [16,32,64]
         self.alphas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
         self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
@@ -238,7 +246,8 @@ class RecNetAffineModular(nn.Module):
         downsample = None
         layers = []
         if stride != 1 or self.inplanes != planes:
-            downsample = nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False)
+            downsample = nn.Sequential(nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False), 
+                                       nn.InstanceNorm2d(planes, affine=False))
             layers.append(RecNetBlockAffineModular(self.inplanes, planes, stride, downsample, affineType=None, getLoss=self.gruLoss))
         else:
             layers.append(RecNetBlockAffineModular(self.inplanes, planes, stride, downsample, affineType='gru', getLoss=self.gruLoss))
@@ -250,7 +259,7 @@ class RecNetAffineModular(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.relu(self.conv1(x))
+        x = self.relu(self.norm1(self.conv1(x)))
         loss = torch.zeros(1, requires_grad=True)
         (x, (l1_alphas,l1_betas), loss) = self.layer1((x, (self.alphas[0], self.betas[0]), loss))
         (x, (l2_alphas,l2_betas), loss) = self.layer2((x, (self.alphas[1],self.betas[1]), loss))
