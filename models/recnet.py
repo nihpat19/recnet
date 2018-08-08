@@ -161,15 +161,15 @@ class marModule(nn.Module):
             #print('mean for each channel: ',mean)
             #print('std for each channel: ', std)
             (new_affines, _) = self.gru(affines.view(1,1,-1), torch.cat((mean, std)).view(1,1,-1))
-            if 1 in torch.isnan(new_affines.squeeze()):
-                embed()
-                exit()
+            #if 1 in torch.isnan(new_affines.squeeze()):
+                #embed()
+                #exit()
             (new_mean, new_std) = new_affines.squeeze().split(self.affine_size)
             out = self.inorm(out)
             out = out*new_std.view(1,-1,1,1) + new_mean.view(1,-1,1,1)
             out = self.relu(out)
             if self.gru_loss==True:
-                new_loss = (torch.abs(new_mean).mean()+torch.abs(new_std).mean())
+                new_loss = torch.abs(new_mean).mean()+torch.abs(new_std-1).mean()
                 return (out, new_affines.squeeze(), loss+new_loss)
             else:
                 return (out, new_affines.squeeze(), loss)
@@ -248,14 +248,13 @@ class ModularAffineRecnet(nn.Module):
         self.alphas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
         self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
         self.relu = nn.ReLU(inplace=True)
-        self.gru_loss=get_gru_loss
-        self.layer1 = marLayer(self.inplanes, self.sizes[0], layers[0], self.gru_loss)
-        self.layer2 = marLayer(self.sizes[0], self.sizes[1], layers[1], self.gru_loss, stride=2)
-        self.layer3 = marLayer(self.sizes[1], self.sizes[2], layers[2], self.gru_loss, stride=2)
-        
+        self.get_gru_loss=get_gru_loss
+        self.layer1 = marLayer(self.inplanes, self.sizes[0], layers[0], self.get_gru_loss)
+        self.layer2 = marLayer(self.sizes[0], self.sizes[1], layers[1], self.get_gru_loss, stride=2)
+        self.layer3 = marLayer(self.sizes[1], self.sizes[2], layers[2], self.get_gru_loss, stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = nn.Linear(64, num_classes)
-        
+        self.gru_loss=nn.Parameter(torch.FloatTensor(1))
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -266,7 +265,7 @@ class ModularAffineRecnet(nn.Module):
             
         for beta in self.betas:
             beta.data.fill_(0)
-            
+        self.gru_loss.data.fill_(0)
     def get_affine_parameters(self):
         for (name, param) in self.named_parameters():
             if 'linear' in name or 'alphas' or 'betas' in name:
@@ -280,9 +279,7 @@ class ModularAffineRecnet(nn.Module):
             
     def forward(self, x):
         x = self.relu(self.norm1(self.conv1(x)))
-        loss = 0
-        
-        (x, _, loss) = self.layer1((x, (self.alphas[0], self.betas[0]), loss))
+        (x, _, loss) = self.layer1((x, (self.alphas[0], self.betas[0]), self.gru_loss))
         (x, _, loss) = self.layer2((x, (self.alphas[1],self.betas[1]), loss))
         (x, _, loss) = self.layer3((x, (self.alphas[2],self.betas[2]), loss))
         
