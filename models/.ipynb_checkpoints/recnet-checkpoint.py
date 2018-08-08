@@ -179,7 +179,7 @@ class marModule(nn.Module):
         
 class marBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None, affine_type=None, get_gru_loss=False):
-        super(ModularAffineRecnetBlock, self).__init__()
+        super(marBlock, self).__init__()
         self.parent=parent
         if parent is None:
             self.module1=marModule(in_channels, out_channels, stride, affine_type, get_gru_loss)
@@ -249,10 +249,9 @@ class ModularAffineRecnet(nn.Module):
         self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
         self.relu = nn.ReLU(inplace=True)
         self.gru_loss=get_gru_loss
-        
-        self.layer1 = marLayer(self.inplanes, sizes[0], layers[0], self.gru_loss)
-        self.layer2 = marLayer(sizes[0], sizes[1], layers[1], self.gru_loss, stride=2)
-        self.layer3 = marLayer(sizes[1], sizes[2], layers[2], self.gru_loss, stride=2)
+        self.layer1 = marLayer(self.inplanes, self.sizes[0], layers[0], self.gru_loss)
+        self.layer2 = marLayer(self.sizes[0], self.sizes[1], layers[1], self.gru_loss, stride=2)
+        self.layer3 = marLayer(self.sizes[1], self.sizes[2], layers[2], self.gru_loss, stride=2)
         
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = nn.Linear(64, num_classes)
@@ -281,7 +280,7 @@ class ModularAffineRecnet(nn.Module):
             
     def forward(self, x):
         x = self.relu(self.norm1(self.conv1(x)))
-        loss = torch.zeros(1, requires_grad=True).cuda()
+        loss = 0
         
         (x, _, loss) = self.layer1((x, (self.alphas[0], self.betas[0]), loss))
         (x, _, loss) = self.layer2((x, (self.alphas[1],self.betas[1]), loss))
