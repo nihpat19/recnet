@@ -136,7 +136,7 @@ class marModule(nn.Module):
     def __init__(self, in_channels, out_channels, stride, affine_type=None, gru_loss=False):
         super(marModule, self).__init__()
         self.conv = self.conv3x3(in_channels, out_channels, stride)
-        self.inorm = nn.InstanceNorm2d(out_channels, affine=False)
+        self.inorm = nn.InstanceNorm2d(out_channels, eps=1, affine=False)
         self.affine_type = affine_type
         if affine_type is not None:
             self.gru = nn.GRU(2*in_channels, 2*out_channels, 1)
@@ -221,7 +221,7 @@ class marLayer(nn.Module):
         
         if self.stride != 1 or self.inplanes != planes:
             self.downsample = nn.Sequential(nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=self.stride, bias=False), 
-                                       nn.InstanceNorm2d(planes, affine=False))
+                                       nn.InstanceNorm2d(planes, eps=1, affine=False))
             self.upsampling_block = marBlock(self.inplanes, planes, self.stride, downsample=self.downsample, affine_type=None, get_gru_loss=self.gru_loss)
             self.timesteps = blocks - 1
         
