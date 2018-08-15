@@ -96,7 +96,7 @@ class AffineRecnet(nn.Module):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
         for alpha in self.alphas:
-            alpha.data.fill_(0)
+            alpha.data.fill_(1)
         for beta in self.betas:
             beta.data.fill_(0)
     def get_affine_parameters(self):

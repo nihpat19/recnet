@@ -60,20 +60,20 @@ def main():
         # model can be set to anyone that I have defined in models folder
         # note the model should match to the cifar type !
 
-        model = recnet_affine(num_classes=100)
+        model = recnet_affine_gru(num_classes=100)
         
 
         # mkdir a new folder to store the checkpoint and best model
         if not os.path.exists('result'):
             os.makedirs('result')
-        fdir = 'result/recnet_affine_linear_9steps'
+        fdir = 'result/paralleltest2'
         if not os.path.exists(fdir):
             os.makedirs(fdir)
 
         # adjust the lr according to the model type
         model_type = 1
         #model = model.cuda()
-        model = nn.DataParallel(model).cuda()
+        model = nn.DataParallel(model, device_ids=[0,5]).cuda()
         affine_params = AffineIterator(model)
         nonaffine_params = AllButAffineIterator(model)
         criterion = nn.CrossEntropyLoss().cuda()
@@ -202,7 +202,7 @@ def train(trainloader, model, criterion, optimizer, epoch):
     for i, (input, target) in enumerate(trainloader):
         # measure data loading time
         data_time.update(time.time() - end)
-
+        
         input, target = input.cuda(), target.cuda()
         input_var = Variable(input)
         target_var = Variable(target)
