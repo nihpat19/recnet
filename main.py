@@ -40,7 +40,13 @@ def AllButAffineIterator(model):
     for(name, param) in model.named_parameters():
         if 'linear' not in name and 'alphas' not in name and 'betas' not in name:
             yield param
-
+            
+def stop_pretraining(model):
+    for module in model.named_children():
+        if 'layer' in module[0]:
+            for child in module[1].named_children():
+                if 'downsample' not in child[0]:
+                    child[1].stop_gru_loss()
 
 def main():
     global args, best_prec
@@ -54,13 +60,13 @@ def main():
         # model can be set to anyone that I have defined in models folder
         # note the model should match to the cifar type !
 
-        model = recnet_affine_modular(num_classes=100, get_gru_loss=True)
+        model = recnet_affine(num_classes=100)
         
 
         # mkdir a new folder to store the checkpoint and best model
         if not os.path.exists('result'):
             os.makedirs('result')
-        fdir = 'result/recnet_affine_gru_modular'
+        fdir = 'result/recnet_affine_linear_9steps'
         if not os.path.exists(fdir):
             os.makedirs(fdir)
 
@@ -119,10 +125,13 @@ def main():
     if args.evaluate:
         validate(testloader, model, criterion)
         return
-    
+    """
     for epoch in range(args.start_epoch, 50):
         train_gru(trainloader, model, criterion, optimizer, epoch)
         
+    stop_pretraining(model)
+    """
+    
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, model_type)
 
@@ -166,13 +175,17 @@ def train_gru(trainloader, model, criterion, optimizer, epoch):
     for i, (input, _) in enumerate(trainloader):
         input_var = Variable(input)
         (_, loss) = model(input_var)
+        if loss.data[0] < 0:
+            embed()
+            exit()
         losses.update(loss.data[0], input.size(0))
         optimizer.zero_grad()
-        #embed()
-        #exit()
-        loss.sum().backward()
+        loss.mean().backward()
         optimizer.step()
         if i % args.print_freq == 0:
+            if (losses.val < 0):
+                embed()
+                exit()
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})'
                   .format(epoch, i, len(trainloader), loss=losses))
@@ -185,7 +198,6 @@ def train(trainloader, model, criterion, optimizer, epoch):
     top1 = AverageMeter()
 
     model.train()
-
     end = time.time()
     for i, (input, target) in enumerate(trainloader):
         # measure data loading time
@@ -196,7 +208,7 @@ def train(trainloader, model, criterion, optimizer, epoch):
         target_var = Variable(target)
 
         # compute output
-        (output, _) = model(input_var)
+        output = model(input_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
@@ -239,7 +251,7 @@ def validate(val_loader, model, criterion):
         target_var = Variable(target, volatile=True)
 
         # compute output
-        (output, _) = model(input_var)
+        output = model(input_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss

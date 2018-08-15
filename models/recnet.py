@@ -12,6 +12,9 @@ import math
 from torch.autograd import Variable
 from IPython import embed
 
+def conv3x3(in_planes, out_planes, stride=1):
+    " 3x3 convolution with padding "
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
 
 
@@ -31,9 +34,12 @@ class AffineRecnetBlock(nn.Module):
             self.stride= parent.stride
             self.downsample=parent.downsample
         self.affine_type=affine_type
+        
         self.batchnorms=nn.ModuleList([nn.BatchNorm2d(out_channels, affine=False) for _ in range(2)])
         self.relu=nn.ReLU()
         self.affine_size = out_channels
+        self.alpha = nn.Parameter(torch.zeros(self.affine_size))
+        self.beta = nn.Parameter(torch.zeros(self.affine_size))
         if affine_type=='linear':
             self.affine_a = nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
             self.affine_b=nn.Sequential(nn.Linear(2*out_channels, out_channels//2), nn.Linear(out_channels//2, 2*out_channels))
@@ -64,6 +70,8 @@ class AffineRecnetBlock(nn.Module):
         else:
             new_bn1_affines = self.affine_a(bn1_affines)
             new_bn2_affines = self.affine_b(bn2_affines)
+            self.alpha = nn.Parameter(new_bn1_affines)
+            self.beta = nn.Parameter(new_bn2_affines)
         return (out, new_bn1_affines, new_bn2_affines)
     
 class AffineRecnet(nn.Module):
@@ -112,7 +120,7 @@ class AffineRecnet(nn.Module):
         parent=block(self.inplanes, planes, self.affine_type, downsample=None)
         layers.append(parent)
         
-        for i in range(1, blocks):
+        for i in range(1, blocks-1):
             layers.append(block(self.inplanes, planes, self.affine_type, parent=parent))
         return nn.Sequential(*layers)
 
@@ -136,7 +144,7 @@ class marModule(nn.Module):
     def __init__(self, in_channels, out_channels, stride, affine_type=None, gru_loss=False):
         super(marModule, self).__init__()
         self.conv = self.conv3x3(in_channels, out_channels, stride)
-        self.inorm = nn.InstanceNorm2d(out_channels, eps=1, affine=False)
+        self.inorm = nn.InstanceNorm2d(out_channels, eps=5, affine=False)
         self.affine_type = affine_type
         if affine_type is not None:
             self.gru = nn.GRU(2*in_channels, 2*out_channels, 1)
@@ -145,8 +153,8 @@ class marModule(nn.Module):
         self.relu = nn.ReLU()
         self.affine_size = out_channels
         self.gru_loss=gru_loss
-        self.affine_m = None
-        self.affine_s = None
+        #self.affine_mean = nn.Parameter(torch.zeros(self.affine_size))
+        #self.affine_std = nn.Parameter(torch.zeros(self.affine_size))
     def conv3x3(self, in_planes, out_planes, stride=1):
         return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
         
@@ -163,8 +171,8 @@ class marModule(nn.Module):
           
             (new_affines, _) = self.gru(affines.view(1,1,-1), torch.cat((mean, std)).view(1,1,-1))
             (new_mean, new_std) = new_affines.squeeze().split(self.affine_size)
-            self.affine_m=nn.Parameter(new_mean)
-            self.affine_s =nn.Parameter(new_std)
+            #self.affine_mean = nn.Parameter(new_mean)
+            #self.affine_std = nn.Parameter(new_std)
             out = self.inorm(out)
             out = out*new_std.view(1,-1,1,1) + new_mean.view(1,-1,1,1)
             out = self.relu(out)
@@ -178,19 +186,12 @@ class marModule(nn.Module):
 
         
 class marBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None, affine_type=None, get_gru_loss=False):
-        super(marBlock, self).__init__()
-        self.parent=parent
-        if parent is None:
-            self.module1=marModule(in_channels, out_channels, stride, affine_type, get_gru_loss)
-            self.module2=marModule(out_channels, out_channels, 1, affine_type, get_gru_loss)
-            self.stride=stride
-            self.downsample=downsample
-        else:
-            self.module1=parent.module1
-            self.module2=parent.module2
-            self.stride=parent.stride
-            self.downsample=parent.downsample
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, affine_type=None, get_gru_loss=False):
+        super(marBlock, self).__init__()        
+        self.module1=marModule(in_channels, out_channels, stride, affine_type, get_gru_loss)
+        self.module2=marModule(out_channels, out_channels, 1, affine_type, get_gru_loss)
+        self.stride=stride
+        self.downsample=downsample
         self.get_gru_loss=get_gru_loss
         self.relu=nn.ReLU()
         
@@ -221,7 +222,7 @@ class marLayer(nn.Module):
         
         if self.stride != 1 or self.inplanes != planes:
             self.downsample = nn.Sequential(nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=self.stride, bias=False), 
-                                       nn.InstanceNorm2d(planes, eps=1, affine=False))
+                                       nn.InstanceNorm2d(planes, eps=5, affine=False))
             self.upsampling_block = marBlock(self.inplanes, planes, self.stride, downsample=self.downsample, affine_type=None, get_gru_loss=self.gru_loss)
             self.timesteps = blocks - 1
         
@@ -229,11 +230,18 @@ class marLayer(nn.Module):
         self.layer_block=marBlock(self.inplanes, planes, downsample=None, affine_type='gru', get_gru_loss=self.gru_loss)
     
     def forward(self, x):
+        self.timestep_alphas = nn.ParameterList([])
+        self.timestep_betas = nn.ParameterList([])
         out = x
+        #embed()
+        #exit()
         if self.upsampling_block is not None:
             out = self.upsampling_block(x)
         for _ in range(self.timesteps):
             out = self.layer_block(out)
+            (_, (alphas, betas), _) = out
+            self.timestep_alphas.append(nn.Parameter(alphas))
+            self.timestep_betas.append(nn.Parameter(betas))
         return out
         
     def kill_pretraining(self):
@@ -246,7 +254,7 @@ class ModularAffineRecnet(nn.Module):
         super(ModularAffineRecnet, self).__init__()
         self.inplanes = 16
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.norm1 = nn.InstanceNorm2d(16, affine=False)
+        self.norm1 = nn.InstanceNorm2d(16, eps=5, affine=False)
         self.sizes = [16,32,64]
         self.alphas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
         self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
@@ -297,6 +305,80 @@ class ModularAffineRecnet(nn.Module):
     
     
 
+    
+class RecNetBlock_postrelu(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, parent=None):
+        super(RecNetBlock_postrelu, self).__init__()
+        self.parent=parent
+        if parent is None:
+            self.convs=nn.ModuleList([conv3x3(in_channels, out_channels, stride), conv3x3(out_channels, out_channels, stride=1)])
+            self.stride=stride
+            self.downsample=downsample
+        else:
+            self.convs = parent.convs
+            self.stride= parent.stride
+            self.downsample=parent.downsample
+        self.batchNorms=nn.ModuleList([nn.BatchNorm2d(out_channels) for _ in range(2)])
+        self.relu=nn.ReLU()
+
+    def forward(self, x):
+        residual=x
+        if self.downsample is not None:
+            residual=self.relu(self.downsample(x))
+        #print('Residual shape: ',residual.shape)
+        out=self.relu(self.batchNorms[0](self.convs[0](x)))
+        #print("output shape 1: ",out.shape)
+        out=self.relu(self.batchNorms[1](self.convs[1](out)))
+        #print("output shape 2: ",out.shape)
+        out+=residual
+        return out
+    
+    
+class RecNet(nn.Module):
+    def __init__(self, block, layers, num_classes=100):
+        super(RecNet, self).__init__()
+        self.inplanes = 16
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.fc = nn.Linear(64, num_classes)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        layers = []
+        if stride != 1 or self.inplanes != planes:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes)
+            )
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes
+        parent=block(self.inplanes, planes, downsample=None)
+        layers.append(parent)
+        for i in range(1, blocks-1):
+            layers.append(block(self.inplanes, planes, parent=parent))
+        return nn.Sequential(*layers)
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
     
 class BasicBlock(nn.Module):
     expansion=1
@@ -392,6 +474,9 @@ def resnet56_cifar(**kwargs):
     model = ResNet_Cifar(BasicBlock, [9, 9, 9], **kwargs)
     return model
 
+def recnet_postrelu(**kwargs):
+    model = RecNet(RecNetBlock_postrelu, [9, 9, 9], **kwargs)
+    return model
 
 def recnet_affine(**kwargs):
     model = AffineRecnet(AffineRecnetBlock, [9,9,9], 'linear', **kwargs)
