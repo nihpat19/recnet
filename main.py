@@ -60,13 +60,13 @@ def main():
         # model can be set to anyone that I have defined in models folder
         # note the model should match to the cifar type !
 
-        model = recnet_affine_gru(num_classes=100)
+        model = recnet_affine_modular(num_classes=100, get_gru_loss=True)
         
 
         # mkdir a new folder to store the checkpoint and best model
         if not os.path.exists('result'):
             os.makedirs('result')
-        fdir = 'result/paralleltest2'
+        fdir = 'result/recnet_affine_gru_pretraining_slopes1'
         if not os.path.exists(fdir):
             os.makedirs(fdir)
 
@@ -125,12 +125,12 @@ def main():
     if args.evaluate:
         validate(testloader, model, criterion)
         return
-    """
+    
     for epoch in range(args.start_epoch, 50):
         train_gru(trainloader, model, criterion, optimizer, epoch)
         
     stop_pretraining(model)
-    """
+    
     
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, model_type)
@@ -208,7 +208,8 @@ def train(trainloader, model, criterion, optimizer, epoch):
         target_var = Variable(target)
 
         # compute output
-        output = model(input_var)
+        #output = model(input_var)
+        (output, _) = model(input_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss

@@ -95,10 +95,24 @@ class AffineRecnet(nn.Module):
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
+        #Initialize Affine Parameters
+        """
         for alpha in self.alphas:
-            alpha.data.fill_(1)
+            alpha.data.fill_(0)
         for beta in self.betas:
             beta.data.fill_(0)
+        """
+        
+        for i in range(len(self.sizes)):
+            (alpha_w, alpha_b)=self.alphas[i].split(self.sizes[i])
+            (beta_w, beta_b)=self.betas[i].split(self.sizes[i])
+            alpha_w.fill_(1)
+            alpha_b.fill_(0)
+            beta_w.fill_(1)
+            beta_b.fill_(0)
+            self.alphas[i] = nn.Parameter(torch.cat((alpha_w, alpha_b)))
+            self.betas[i] = nn.Parameter(torch.cat((beta_w, beta_b)))
+        
     def get_affine_parameters(self):
         for (name, param) in self.named_parameters():
             if 'linear' in name or 'alphas' in name or 'betas' in name:
@@ -144,7 +158,7 @@ class marModule(nn.Module):
     def __init__(self, in_channels, out_channels, stride, affine_type=None, gru_loss=False):
         super(marModule, self).__init__()
         self.conv = self.conv3x3(in_channels, out_channels, stride)
-        self.inorm = nn.InstanceNorm2d(out_channels, eps=5, affine=False)
+        self.norm = nn.BatchNorm2d(out_channels, affine=False, track_running_stats=False)
         self.affine_type = affine_type
         if affine_type is not None:
             self.gru = nn.GRU(2*in_channels, 2*out_channels, 1)
@@ -171,9 +185,7 @@ class marModule(nn.Module):
           
             (new_affines, _) = self.gru(affines.view(1,1,-1), torch.cat((mean, std)).view(1,1,-1))
             (new_mean, new_std) = new_affines.squeeze().split(self.affine_size)
-            #self.affine_mean = nn.Parameter(new_mean)
-            #self.affine_std = nn.Parameter(new_std)
-            out = self.inorm(out)
+            out = self.norm(out)
             out = out*new_std.view(1,-1,1,1) + new_mean.view(1,-1,1,1)
             out = self.relu(out)
             if self.gru_loss==True:
@@ -182,7 +194,7 @@ class marModule(nn.Module):
             else:
                 return (out, new_affines.squeeze(), loss)
         else:
-            return (self.relu(self.inorm(out)), affines, loss)
+            return (self.relu(self.norm(out)), affines, loss)
 
         
 class marBlock(nn.Module):
@@ -222,7 +234,7 @@ class marLayer(nn.Module):
         
         if self.stride != 1 or self.inplanes != planes:
             self.downsample = nn.Sequential(nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=self.stride, bias=False), 
-                                       nn.InstanceNorm2d(planes, eps=5, affine=False))
+                                       nn.BatchNorm2d(planes, affine=False, track_running_stats=False))
             self.upsampling_block = marBlock(self.inplanes, planes, self.stride, downsample=self.downsample, affine_type=None, get_gru_loss=self.gru_loss)
             self.timesteps = blocks - 1
         
@@ -254,7 +266,7 @@ class ModularAffineRecnet(nn.Module):
         super(ModularAffineRecnet, self).__init__()
         self.inplanes = 16
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.norm1 = nn.InstanceNorm2d(16, eps=5, affine=False)
+        self.norm1 = nn.BatchNorm2d(16, affine=False, track_running_stats=False)
         self.sizes = [16,32,64]
         self.alphas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
         self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
@@ -271,10 +283,16 @@ class ModularAffineRecnet(nn.Module):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
                 
-        for alpha in self.alphas:
-            alpha.data.fill_(0)
-        for beta in self.betas:
-            beta.data.fill_(0)
+        for i in range(len(self.sizes)):
+            (alpha_w, alpha_b)=self.alphas[i].split(self.sizes[i])
+            (beta_w, beta_b)=self.betas[i].split(self.sizes[i])
+            alpha_w.fill_(1)
+            alpha_b.fill_(0)
+            beta_w.fill_(1)
+            beta_b.fill_(0)
+            self.alphas[i] = nn.Parameter(torch.cat((alpha_w, alpha_b)))
+            self.betas[i] = nn.Parameter(torch.cat((beta_w, beta_b)))
+        
         
     def turn_off_pretraining(self):
         self.layer1.kill_pretraining()
