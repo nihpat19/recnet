@@ -57,8 +57,7 @@ def main():
     print('=> Building model...')
     if use_gpu:
         print('Cuda is available.')
-        # model can be set to anyone that I have defined in models folder
-        # note the model should match to the cifar type !
+
 
         model = recnet_affine_modular(num_classes=100, get_gru_loss=True)
         
@@ -66,14 +65,14 @@ def main():
         # mkdir a new folder to store the checkpoint and best model
         if not os.path.exists('result'):
             os.makedirs('result')
-        fdir = 'result/recnet_affine_gru_pretraining_slopes1'
+        fdir = 'result/recnet_affine_gru_pretraining_std=1'
         if not os.path.exists(fdir):
             os.makedirs(fdir)
 
         # adjust the lr according to the model type
         model_type = 1
         #model = model.cuda()
-        model = nn.DataParallel(model, device_ids=[0,5]).cuda()
+        model = nn.DataParallel(model, device_ids=[0, 5]).cuda()
         affine_params = AffineIterator(model)
         nonaffine_params = AllButAffineIterator(model)
         criterion = nn.CrossEntropyLoss().cuda()
@@ -125,12 +124,11 @@ def main():
     if args.evaluate:
         validate(testloader, model, criterion)
         return
-    
-    for epoch in range(args.start_epoch, 50):
+    for epoch in range(args.start_epoch, 20):
         train_gru(trainloader, model, criterion, optimizer, epoch)
-        
+
     stop_pretraining(model)
-    
+
     
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, model_type)
@@ -175,9 +173,6 @@ def train_gru(trainloader, model, criterion, optimizer, epoch):
     for i, (input, _) in enumerate(trainloader):
         input_var = Variable(input)
         (_, loss) = model(input_var)
-        if loss.data[0] < 0:
-            embed()
-            exit()
         losses.update(loss.data[0], input.size(0))
         optimizer.zero_grad()
         loss.mean().backward()
@@ -189,7 +184,7 @@ def train_gru(trainloader, model, criterion, optimizer, epoch):
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})'
                   .format(epoch, i, len(trainloader), loss=losses))
-    
+
 
 def train(trainloader, model, criterion, optimizer, epoch):
     batch_time = AverageMeter()
@@ -208,7 +203,6 @@ def train(trainloader, model, criterion, optimizer, epoch):
         target_var = Variable(target)
 
         # compute output
-        #output = model(input_var)
         (output, _) = model(input_var)
         loss = criterion(output, target_var)
 
@@ -252,7 +246,7 @@ def validate(val_loader, model, criterion):
         target_var = Variable(target, volatile=True)
 
         # compute output
-        output = model(input_var)
+        (output, _) = model(input_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
