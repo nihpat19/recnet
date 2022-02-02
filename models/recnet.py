@@ -9,7 +9,7 @@ Reference:
 import torch
 import torch.nn as nn
 import math
-from torch.autograd import Variable
+#from torch.autograd import Variable
 from IPython import embed
 
 """
@@ -504,7 +504,7 @@ def recnet_affine_modular(**kwargs):
     return model
 if __name__ is '__main__':
     net = preact_resnet110_cifar()
-    y = net(torch.autograd.Variable(torch.randn(1, 3, 32, 32)))
+    y = net(torch.randn(1, 3, 32, 32))
     print(net)
     print(y.size())
 
