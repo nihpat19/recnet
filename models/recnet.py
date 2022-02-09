@@ -123,8 +123,10 @@ class ModularAffineRecnet(nn.Module):
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.norm1 = nn.BatchNorm2d(16, affine=False, track_running_stats=False)
         self.sizes = [16,32,64]
-        self.alphas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
-        self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
+        #self.alphas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
+        self.alphas = nn.ParameterList([nn.Parameter(torch.cat((torch.FloatTensor(sz).fill_(0),torch.FloatTensor(sz).fill_(1)))) for sz in self.sizes])
+        #self.betas = nn.ParameterList([nn.Parameter(torch.FloatTensor(2*sz)) for sz in self.sizes])
+        self.betas = nn.ParameterList([nn.Parameter(torch.cat((torch.FloatTensor(sz).fill_(0),torch.FloatTensor(sz).fill_(1)))) for sz in self.sizes])
         self.relu = nn.ReLU(inplace=True)
         self.get_gru_loss=get_gru_loss
         self.layer1 = marLayer(self.inplanes, self.sizes[0], layers[0], self.get_gru_loss)
@@ -132,22 +134,13 @@ class ModularAffineRecnet(nn.Module):
         self.layer3 = marLayer(self.sizes[1], self.sizes[2], layers[2], self.get_gru_loss, stride=2)
         self.avgpool = nn.AvgPool2d(8, stride=1)
         self.fc = nn.Linear(64, num_classes)
-        self.dtype = torch.cuda.FloatTensor
+        self.dtype = torch.FloatTensor
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
                 
-        for i in range(len(self.sizes)):
-            (alpha_mean, alpha_std)=self.alphas[i].split(self.sizes[i])
-            (beta_mean, beta_std)=self.betas[i].split(self.sizes[i])
-            alpha_mean.fill_(0)
-            alpha_std.fill_(1)
-            beta_mean.fill_(0)
-            beta_std.fill_(1)
-            self.alphas[i] = nn.Parameter(torch.cat((alpha_mean, alpha_std)))
-            self.betas[i] = nn.Parameter(torch.cat((beta_mean, beta_std)))
-        
+
         
     def turn_off_pretraining(self):
         self.layer1.kill_pretraining()
